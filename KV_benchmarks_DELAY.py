@@ -11,7 +11,8 @@ def generateString(Size):
 def main():
     if(len(sys.argv) < 5):
         print("Please enter the number of iterations - the number of packets - the size of the key - the size of the value")
-    print (len(sys.argv))
+        sys.exit(0)
+    print(len(sys.argv))
     iterations = int(sys.argv[1])
     print(iterations)
     cmdSize = int(sys.argv[2])
@@ -34,7 +35,6 @@ def main():
         s = '\n'.join(inp)
         out = p.communicate(input=s.encode())[0]
         print(out.decode())
-
 
 if __name__ == '__main__':
     main()
