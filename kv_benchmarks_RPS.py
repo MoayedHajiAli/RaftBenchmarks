@@ -1,15 +1,23 @@
 import sys
 import random
+import socket
 import time
+import _thread
 from subprocess import Popen, PIPE
-
-# CONSTRAINS
-MAX_RPS = 50
-MIN_PACKET_SIZE = 5
-MAX_PACKET_SIZE = 1024
-PACKET_SIZE_DIFFERENCE = 50
-ITERATION_TEST = 10
+inp = []
+ADDR_FAMILY = socket.AF_INET
+SOCK_TYPE = socket.SOCK_STREAM
+SERVERS_IP = ['172.16.112.12']
+PORT = 65432
+CLIENT_PORT = 65430
+BUF_SIZE = 1024
+commited = 0
+err_cnt = 0
+delay_analysis = []
+error_analysis = []
+change_in_leader = False
 VALID_ERROR_PERCENTAGE = 0.1
+MAX_RPS = 1000
 
 def generateString(Size):
     f = ""
@@ -17,46 +25,168 @@ def generateString(Size):
         f += chr(random.randrange(0, 26) + ord('a'))
     return f
 
-def checkErr(packetSize, rps):
-    err_rate = 0.0
-    for _ in range(ITERATION_TEST):
+
+def reset():
+    global commited
+    connect()
+    commited = 0
+    time.sleep(2.0)
+
+def find_max_rps(lo, hi):
+    while lo < hi:
+        print(lo, hi)
+        if lo == hi - 1:
+            reset()
+            if checkErr(hi) <= VALID_ERROR_PERCENTAGE:
+                lo = hi
+            break
+        mid = int((lo + hi) / 2)
+        reset()
+        if checkErr(mid) <= VALID_ERROR_PERCENTAGE:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+
+def checkErr(rps):
+    global err_cnt, commited
+    err_cnt = 0
+    sent = 0
+    startTime = time.time()
+    while time.time() - startTime < 25.0:
         st = time.time()
-        cmd = [sys.executable, 'client.py']
-        p = Popen(cmd, stdin=PIPE, stdout=PIPE)
-        inp = []
-        for __ in range(0, int(rps)):
-            inp.append(generateString(int(packetSize/2)) + " " + generateString(int(packetSize/2)))
-        s = '\n'.join(inp)
-        #print(out.decode())
-        err_rate += float(p.communicate(input=s.encode())[0].decode())
-        if time.time()-st > 1.0:
-            return 1
-        time.sleep(1.0 - (time.time()-st))
-    print(err_rate/ITERATION_TEST)
-    return err_rate/ITERATION_TEST
+        for i in range(0, rps):
+            try:
+                mySocket.sendall((inp[i]+'#'+str(time.time())+':').encode())
+                #print((inp[i]+'#'+str(time.time())+':'))
+                i += 1
+                sent += 1
+            except socket.error:
+                connect()
+        delta = time.time() - st
+        assert delta <= 1.0
+        time.sleep(1.0 - delta)
+    time.sleep(4.0)
+    err_rate = 1.0 * commited / (1.0 * sent)
+    return err_rate
+
+
+def connect(IP = None):
+    print("new Connection")
+    global mySocket, change_in_leader
+    try:
+        mySocket.close()
+    except:
+        pass
+    mySocket = socket.socket(ADDR_FAMILY, SOCK_TYPE)
+    is_changed = True
+    if IP:
+        try:
+            mySocket.connect((IP, CLIENT_PORT))
+            LeaderIP = mySocket.recv(BUF_SIZE).decode()
+            while LeaderIP != str(IP):
+                mySocket.close()
+                IP = LeaderIP
+                try:
+                    mySocket = socket.socket(ADDR_FAMILY, SOCK_TYPE)
+                    mySocket.connect((LeaderIP, CLIENT_PORT))
+                except socket.error:
+                    is_changed = False
+                    break
+                LeaderIP = str(mySocket.recv(BUF_SIZE).decode())
+            if is_changed:
+                change_in_leader = True
+                return
+        except socket.error:
+            pass
+    is_changed = True
+    for i in range(0, len(SERVERS_IP)):
+        targetAddr = SERVERS_IP[i]
+        try:
+            mySocket.connect((targetAddr, CLIENT_PORT))
+            LeaderIP = str(mySocket.recv(BUF_SIZE).decode())
+            while LeaderIP != str(targetAddr):
+                mySocket.close()
+                print("closed")
+                targetAddr = LeaderIP
+                try:
+                    mySocket = socket.socket(ADDR_FAMILY, SOCK_TYPE)
+                    mySocket.connect((LeaderIP, CLIENT_PORT))
+                    print("connected to the leader")
+                except socket.error:
+                    is_changed = False
+                    break
+                LeaderIP = str(mySocket.recv(BUF_SIZE).decode())
+            if is_changed:
+                change_in_leader = True
+                return
+        except socket.error:
+            continue
+    print("Could not connect to any server")
+    exit(0)
+
+def revc_respone():
+    global mySocket, commited, delay_analysis, error_analysis, err_cnt
+    mySocket.settimeout(8.0)
+    ret = ''
+    while True:
+        try:
+            ret += mySocket.recv(BUF_SIZE).decode()
+            ind1, ind2 = ret.find('#', 1), -1
+            while len(ret) and ind1 != -1:
+                #print(ret)
+                err = int(ret[ind2 + 1:ind1])
+                tem = ret.find('#', ind1 + 1)
+                if tem == -1:
+                    break
+                ind2 = tem
+                res = ret[ind1 + 1:ind2]
+                #print("ret", err, res)
+                if err == -1:
+                    connect(res)
+                elif err == 0:
+                    delay_analysis.append((res, time.time()))
+                    commited += 1
+                else:
+                    error_analysis.append((err, res, time.time()))
+                    err_cnt += 1
+                ind1 = ret.find('#', ind2 + 1)
+            if ind2 != 0:
+                ret = ret[ind2+1:]
+        except socket.timeout:
+            print("socket timeout in receiving from the server" + str(commited))
+            if commited == len(inp):
+                return
+            else:
+                connect()
+        except socket.error as e:
+            print("Error in connection", e, commited)
+            connect()
 
 def main():
-
-    print("All the data in RPS_client_analysis.txt will be deleted y|n ?")
-    res = input()
-    if(res == 'n'):
+    global inp, conn
+    if(len(sys.argv) != 3):
+        print("the size of the key - the size of the value")
         sys.exit(0)
-    cmd = [sys.executable, 'client.py']
-    with open("RPS_client_analysis.txt", 'w+') as f:
-        for packetSize in range(MIN_PACKET_SIZE, MAX_PACKET_SIZE, PACKET_SIZE_DIFFERENCE):
-            lo, hi = 1, MAX_RPS
-            while lo < hi:
-                if lo == hi-1:
-                    if checkErr(packetSize, hi) <= VALID_ERROR_PERCENTAGE:
-                        lo = hi
-                    break
-                mid = int((lo + hi)/2)
-                if checkErr(packetSize, mid) <= VALID_ERROR_PERCENTAGE:
-                    lo = mid
-                else:
-                    hi = mid-1
-                print (lo, hi)
-            f.write(str(packetSize) + " " + str(lo) + '\n')
+    keySize = int(sys.argv[1])
+    valueSize = int(sys.argv[2])
+    print("All the data in delay_client_analysis and error_client_analysis will be delated y|n ?")
+    res = input()
+    if(res != 'y'):
+        sys.exit(0)
+    for _ in range(0, MAX_RPS):
+        inp.append(generateString(keySize) + ":" + generateString(valueSize))
+    connect()
+    _thread.start_new_thread(revc_respone, ())
+    mx_rps = find_max_rps(0, MAX_RPS)
+    print(mx_rps)
+    with open("dealy_client_analysis.txt", 'w+') as f:
+        for i in range(0, len(delay_analysis)):
+            f.write(str(delay_analysis[i][0]) + " " + str(delay_analysis[i][1]) + '\n')
+    with open("error_client_analysis.txt", 'w+') as f:
+        for i in range(0, len(error_analysis)):
+            f.write(str(error_analysis[i][0]) + " " + str(error_analysis[i][1]) +
+                    " " + str(error_analysis[i][2]) + '\n')
 
 
 if __name__ == '__main__':
