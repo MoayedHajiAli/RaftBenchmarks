@@ -3,14 +3,14 @@ This benchmark is based on a raft library implemented in python called [PySyncOb
 
  > PySyncObj is a python library for building fault-tolerant distributed systems. It provides the ability to replicate your application data between multiple servers.
  
-#install
+# install
 PySyncObj
  
 ```
 pip3 install pysyncobj
 ```
 
-#usage on local testing
+# usage on local testing
 ### Latency test on local machine:
 Run Delay_becnhmark.py and specify the number of servers on the cluster, the number of requests per seconds, the starting packet size, the ending packet size, and the number of tests.
 
@@ -25,7 +25,7 @@ Result:
 
 
 
-###For Running a separated local test:
+### For Running a separated local test:
 - Run StartLocalServers.py and specify the number of servers in the cluster
 - Latency: run Single_delay_benchmark.py and specify RPS, key packet size, value packet size
 
